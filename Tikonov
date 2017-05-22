@@ -1,0 +1,2112 @@
+%primero obtengo los valores de las medidas que son la base de todos los
+%calculos. 
+%De paso defino muchas de las varibales de los distintos algortimos...
+%tama?o de velda, constante de anisotrop?a, etc...
+ 
+clear
+h=0.003;     %tama?o de celda, es la altura de cada hexagono
+X=0.03;     %ancho del cuerpo
+Y=0.03;     %alto el cuerpo
+Rhaz=0.001; %ancho del haz
+Xfuente=0.015; %Distancia del borde izquierdo del cuerpo donde se aplica el haz laser
+l=h*0.577350269;    %longitud de cada lado de un hexagono
+N=round(Y/h);       %numero de hexagonos en la vertical
+M=round(X/(1.5*l));  %numero de hexagonos en la horizontal
+ 
+g=0.8;
+frente_lado =.35924716;
+atras_lado =.10289471;
+atras =.075716250;
+ 
+m_a_inicial=40;  %Valor inicial de la absorci?n, el mismo para todos
+m_s_inicial=5800;  %Valor inicial del esparcimiento, el mismo para todos
+T=1200; %valores maximos de R
+ 
+%valores iniciales y de frontera  de la luz para todo t
+Mmed=round(Xfuente/(1.5*l));  %Numero de la celda donde se aplica el haz laser en su mayor intensidad
+ 
+R=zeros(N+2,M+3,T,6);       %Radiancia desde el cuerpo 
+ 
+for jgauss=2:M+1;
+    R(1,jgauss,:,1)=exp(-((jgauss-Mmed)*(1.5*l)/Rhaz)^2);    
+end
+ 
+ 
+%INICIO subrutina para encontrar valores de Medida
+m_a=m_a_inicial*ones(N+2,M+2);
+m_s=m_s_inicial*ones(N+2,M+2);
+ 
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+%ahora se tinene los valores de la medida del objeto estudiado, la frontera
+%original que es el valor de referencia
+ 
+        Mfondo=zeros(M,1);
+        Mfondo=R(N+1,2:M+1,t,1);
+        Mizq=zeros(2*N,1);
+        Mizq(1:N)=R(2:N+1,2,t,2);
+        Mizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Mder=zeros(2*N,1);
+        Mder(1:N)=R(2:N+1,M+1,t,5);
+        Mder(N+1:2*N)=R(2:N+1,M+1,t,6); 
+%FINAL subrutina para encontrar valores de Medida       
+ 
+ 
+%comienzo a aplicar el algoritmo para hallar el m'inimo      
+                     
+kos=0;
+criterio_stop=true;
+cgc_s=0;    %escalar que uso para unir el vector grad conjugado con el gradiente inverso
+hcg_s=zeros(N+2,M+2);     %vector del gradiente conjugado
+hcg_s_prev=zeros(N+2,M+2);   %aqui guardo el valor del grad conjugado anterior
+cgc_a=0;    %escalar que uso para unir el vector grad conjugado con el gradiente inverso
+hcg_a=zeros(N+2,M+2);     %vector del gradiente conjugado
+hcg_a_prev=zeros(N+2,M+2);   %aqui guardo el valor del grad conjugado anterior
+Delta=1/1000000;  %Cosas del gradiente
+ 
+ 
+%paso kos_max de 1000 a 10 para hacer pruebas
+kos_max=20;   %numero max de iteraciones para encontrar el valor buscado
+%valores de los coeficientes de tikonov w_s y w_a
+w_s=0.00001/(10^8*N*M);
+w_a=0.00001/(10^4*N*M);
+ 
+m_s_historico=zeros(N+2,M+2,kos_max);
+m_a_historico=zeros(N+2,M+2,kos_max);
+alpha_a_historico=zeros(kos_max,1);
+alpha_s_historico=zeros(kos_max,1);
+ 
+ 
+alpha_s_delta=10000;    % se toma alpha_s_delta como 10000 y no un valor m'as peque;o porque la cosa as'i se vuelve irrisoria pues hcg_s es muy pequenho
+FuncObj_s=zeros(kos_max+1,1);   %para evaluar FuncObj en varios 
+Dist_m_s=zeros(kos_max+1,1);
+alpha_a_delta=10000;    % se toma alpha_a_delta como 1 y no un valor m'as peque;o porque la cosa as'i se vuelve irrisoria pues hcg_a es muy pequenha
+FuncObj_a=zeros(kos_max+1,1);   %para evaluar FuncObj en varios 
+Dist_m_a=zeros(kos_max+1,1);
+m_a_original=m_a;
+m_s_original=m_s;
+ 
+%los valores de los coeficientes se eligen aleatorios en el cuerpo que se aproxima        
+m_a=100*rand(N+2,M+2);
+m_s=10000*rand(N+2,M+2);
+%limpio los bordes de m_a y m_s a ceros
+m_a(:,1)=zeros(N+2,1);
+m_a(:,M+2)=zeros(N+2,1);
+m_a(1,:)=zeros(1,M+2);
+m_a(N+2,:)=zeros(1,M+2);
+m_s(:,1)=zeros(N+2,1);
+m_s(:,M+2)=zeros(N+2,1);
+m_s(1,:)=zeros(1,M+2);
+m_s(N+2,:)=zeros(1,M+2);
+ 
+%INICIO subrutina para encontrar el gradiente en m_s   
+%valores originales
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+%valores de la FRONTERA iniciales
+Rofondo=zeros(M,1);
+Rofondo=R(N+1,2:M+1,t,1);
+Roizq=zeros(2*N,1);
+Roizq(1:N)=R(2:N+1,2,t,2);
+Roizq(N+1:2*N)=R(2:N+1,2,t,3);
+Roder=zeros(2*N,1);
+Roder(1:N)=R(2:N+1,M+1,t,5);
+Roder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+%pillo el valor de la funcobj
+func_obj_i=0.5*((Mfondo-Rofondo)*(Mfondo-Rofondo)'+(Mizq-Roizq)'*(Mizq-Roizq)+(Mder-Roder)'*(Mder-Roder)) + w_s*sum(sum(m_s.^2));
+ 
+Derivada=zeros(N+2,M+2);
+ 
+%aqui debo cambiar los coeficientes m_s para variar las fronteras
+for rt=2:N+1;
+    for st=2:M+1;
+        m_s(rt,st)=m_s(rt,st)*(1+Delta);
+ 
+        t=2; m=2; n=2;
+        diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+        %variacion delta respecto a m_s
+        func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+         
+        Derivada(rt,st)=(1/(m_s(rt,st)*Delta))*((Rfondo-Rofondo)*(Rofondo-Mfondo)'+(Rizq-Roizq)'*(Roizq-Mizq)+(Rder-Roder)'*(Roder-Mder))+ 2*w_s*m_s(rt,st);
+        Derivada_b=Derivada;
+         
+        m_s(rt,st)=m_s(rt,st)/(1+Delta);
+    end
+end 
+%FINAL subrutina para encontrar el gradiente en m_s
+ 
+ 
+ 
+%INICIO subrutina para encontrar el gradiente en m_a  
+%valores originales
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+%valores de la FRONTERA iniciales
+Rofondo=zeros(M,1);
+Rofondo=R(N+1,2:M+1,t,1);
+Roizq=zeros(2*N,1);
+Roizq(1:N)=R(2:N+1,2,t,2);
+Roizq(N+1:2*N)=R(2:N+1,2,t,3);
+Roder=zeros(2*N,1);
+Roder(1:N)=R(2:N+1,M+1,t,5);
+Roder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+%pillo el valor de la funcobj
+func_obj_i=0.5*((Mfondo-Rofondo)*(Mfondo-Rofondo)'+(Mizq-Roizq)'*(Mizq-Roizq)+(Mder-Roder)'*(Mder-Roder))+ w_a*sum(sum(m_a.^2));
+ 
+Derivada_a=zeros(N+2,M+2);
+ 
+%aqui debo cambiar los coeficientes m_s para variar las fronteras
+for rt=2:N+1;
+    for st=2:M+1;
+        m_a(rt,st)=m_a(rt,st)*(1+Delta);
+ 
+        t=2; m=2; n=2;
+        diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+        %variacion delta respecto a m_s
+        func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+         
+        Derivada_a(rt,st)=(1/(m_a(rt,st)*Delta))*((Rfondo-Rofondo)*(Rofondo-Mfondo)'+(Rizq-Roizq)'*(Roizq-Mizq)+(Rder-Roder)'*(Roder-Mder))+ 2*w_a*m_a(rt,st);
+        Derivada_b_a=Derivada_a;
+         
+        m_a(rt,st)=m_a(rt,st)/(1+Delta);
+    end
+end 
+%FINAL subrutina para encontrar el gradiente en m_a
+ 
+ 
+ 
+ 
+tic
+while (criterio_stop & kos<kos_max)
+    hcg_s_prev=hcg_s;
+    hcg_s=-Derivada_b+cgc_s*hcg_s_prev;
+    comparar_direccion=0;
+    for n=2:N+1;
+        for m=2:M+1;
+            comparar_direccion=comparar_direccion+Derivada_b(n,m)*hcg_s(n,m);
+        end
+    end
+             
+    if comparar_direccion>=0
+        hcg_s=-Derivada_b;
+    end
+     
+     
+    %INICIO subrutina calculo FuncObj y derivada de alpha=0
+    func_obj_i=0.5*((Mfondo-Rofondo)*(Mfondo-Rofondo)'+(Mizq-Roizq)'*(Mizq-Roizq)+(Mder-Roder)'*(Mder-Roder))+ w_s*sum(sum(m_s.^2));
+    m_s=m_s+alpha_s_delta*hcg_s; %variacion del argumento de la funci'on
+     
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+FuncObj_s_no_tikonov_tempo=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder));
+m_s=m_s-alpha_s_delta*hcg_s;
+ 
+DerivadaFuncObj_b_s=(func_obj_f-func_obj_i)/alpha_s_delta;
+func_obj_b_s_0=func_obj_i;
+DerivadaFuncObj_b_s_0=DerivadaFuncObj_b_s;
+%FINAL subrutina calculo func obj y derivada de alpha=0
+ 
+ 
+%pongo el max valor de alpha_s de tal forma que equivalga a un 5% del
+%valor de m_s_max
+alpha_s_max=500/max(max(abs(hcg_s)));
+ks_max=N*M;
+ 
+if DerivadaFuncObj_b_s>=0
+    alpha_s=alpha_s_max;
+else
+    ks=0;
+    gamma_s=0.9*DerivadaFuncObj_b_s_0;
+    a=0;
+    b=0.05*alpha_s_max;
+     
+     
+%INICIO subrutina para conocer los valores de las funcion y derivada func obj para el valor de b
+m_s=m_s+b*hcg_s; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+ 
+m_s=m_s+alpha_s_delta*hcg_s;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+ 
+DerivadaFuncObj_b_s=(func_obj_f-func_obj_i)*100000/alpha_s_delta;
+ 
+%devuelvo los valores originales de m_s
+m_s=m_s-(b+alpha_s_delta)*hcg_s;
+%FINAL subrutina para conocer los valores de las funcion y derivada func obj para el valor de b
+ 
+ 
+%calculo el valor de lambda para b
+lambda_b=func_obj_b_s_0+0.01*DerivadaFuncObj_b_s_0*b;
+ 
+    %con este while acoto el valor de b, ya sea por los criterios de
+    %derivada, funcobj o simplemente por pasarse del l'imite
+    while (((func_obj_i<=lambda_b)&(DerivadaFuncObj_b_s<=gamma_s))&(b<6*alpha_s_max)&(ks<ks_max))
+        ks=ks+1;
+        a=b;
+        b=2*b;
+        %recalculo los valores de la funcObj y su derivada para reevaluar las condiciones del while
+         
+         
+%INICIO subrutina para conocer los valores de las funcion y derivada func obj para el valor de b
+m_s=m_s+b*hcg_s; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+ 
+m_s=m_s+alpha_s_delta*hcg_s;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+func_obj_b_s=func_obj_i;
+ 
+DerivadaFuncObj_b_s=(func_obj_f-func_obj_i)*100000/alpha_s_delta;
+ 
+%devuelvo los valores originales de m_s
+m_s=m_s-(b+alpha_s_delta)*hcg_s;
+%FINAL subrutina para conocer los valores de las funcion y derivada funcobj para el valor de b
+ 
+ 
+    lambda_b=func_obj_b_s+0.01*DerivadaFuncObj_b_s_0*b;
+    end
+    alpha_s=b; 
+    %con esto ya consegui un b que esta en la regi?n suave del m?nimo o a
+    %su derecha.
+end
+     
+    %ahora el calculo para disminuir el cerco
+     
+     
+    %INICIO subrutina para conocer los valores de las funcion y derivada
+    %func obj para el valor de a
+m_s=m_s+a*hcg_s; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+ 
+m_s=m_s+alpha_s_delta*hcg_s;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+func_obj_a_s=func_obj_i;
+ 
+DerivadaFuncObj_a_s=(func_obj_f-func_obj_i)*100000/alpha_s_delta;
+ 
+%devuelvo los valores originales de m_s
+m_s=m_s-(a+alpha_s_delta)*hcg_s;
+%FINAL subrutina para conocer los valores de las funcion y derivada funcobj para el valor de a
+     
+ 
+    tao=1/50;
+    epsi=alpha_s_max/(3*N*M); %que es un valor peque? de epsi que varia con el tama?o del cuerpo
+    ks=0;
+    while ((abs(DerivadaFuncObj_b_s)>tao*abs(DerivadaFuncObj_b_s_0))&(b-a>epsi)&(ks<ks_max))
+        ks=ks+1;
+        Ds=b-a;
+        Cs=(func_obj_b_s-func_obj_a_s-Ds*DerivadaFuncObj_a_s)/(Ds^2);
+        if Cs>0
+            alpha_s=a-DerivadaFuncObj_a_s/(2*Cs);
+            alpha_s=min(max(alpha_s,a+0.1*Ds),b-0.1*Ds);
+        else
+            alpha_s=(a+b)/2;
+        end
+         
+         
+         %INICIO subrutina para conocer los valores de las funcion y
+         %derivada de la func obj para alpha_s
+          
+m_s=m_s+alpha_s*hcg_s; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+ 
+m_s=m_s+alpha_s_delta*hcg_s;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+func_obj_alpha_s=func_obj_i;
+ 
+DerivadaFuncObj_alpha_s=(func_obj_f-func_obj_i)*100000/alpha_s_delta;
+ 
+%devuelvo los valores originales de m_s
+m_s=m_s-(alpha_s+alpha_s_delta)*hcg_s;
+        %FINAL subrutina para conocer los valores de las funcion obj para el valor de alpha_s
+         
+         
+        lambda_alpha_s=func_obj_b_s_0+0.01*DerivadaFuncObj_b_s_0*alpha_s;
+        if func_obj_alpha_s<lambda_alpha_s
+            a=alpha_s;
+        else
+            b=alpha_s;
+        end
+         
+         
+        %INICIO subrutina para conocer los valores de las funcion obj para
+         %el valor de b
+m_s=m_s+b*hcg_s; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_b_s=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_s*sum(sum(m_s.^2));
+m_s=m_s-b*hcg_s;
+        %FINAL subrutina para conocer los valores de las funcion obj para
+        %el valor de b
+         
+         
+        %INICIO subrutina para conocer los valores de las funcion y
+         %derivada de la func obj para a
+          
+m_s=m_s+a*hcg_s; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+ 
+m_s=m_s+alpha_s_delta*hcg_s;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+func_obj_a_s=func_obj_i;
+ 
+DerivadaFuncObj_a_s=(func_obj_f-func_obj_i)*100000/alpha_s_delta;
+ 
+%devuelvo los valores originales de m_s
+m_s=m_s-(a+alpha_s_delta)*hcg_s;
+        %FINAL subrutina para conocer los valores de las funcion y
+         %derivada de la func obj para a       
+ 
+         
+        if func_obj_a_s>func_obj_b_s_0
+            alpha_s=alpha_s_max;
+        end
+        
+    end
+    m_s_prev=m_s;
+    m_s=abs(m_s+alpha_s*hcg_s);
+    Derivada_b_prev=Derivada_b;
+     
+     
+     
+%INICIO subrutina para encontrar el gradiente en m_s   
+%valores originales
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+%valores de la FRONTERA iniciales
+Rofondo=zeros(M,1);
+Rofondo=R(N+1,2:M+1,t,1);
+Roizq=zeros(2*N,1);
+Roizq(1:N)=R(2:N+1,2,t,2);
+Roizq(N+1:2*N)=R(2:N+1,2,t,3);
+Roder=zeros(2*N,1);
+Roder(1:N)=R(2:N+1,M+1,t,5);
+Roder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+%pillo el valor de la funcobj
+func_obj_i=0.5*((Mfondo-Rofondo)*(Mfondo-Rofondo)'+(Mizq-Roizq)'*(Mizq-Roizq)+(Mder-Roder)'*(Mder-Roder))+ w_a*sum(sum(m_a.^2));
+ 
+Derivada_b=zeros(N+2,M+2);
+ 
+%aqui debo cambiar los coeficientes m_s para variar las fronteras
+for rt=2:N+1;
+    for st=2:M+1;
+        m_s(rt,st)=m_s(rt,st)*(1+Delta);
+ 
+        t=2; m=2; n=2;
+        diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+        %variacion delta respecto a m_s
+        func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+         
+        Derivada_b(rt,st)=(1/(m_s(rt,st)*Delta))*((Rfondo-Rofondo)*(Rofondo-Mfondo)'+(Rizq-Roizq)'*(Roizq-Mizq)+(Rder-Roder)'*(Roder-Mder))+ 2*w_s*m_s(rt,st);
+         
+        m_s(rt,st)=m_s(rt,st)/(1+Delta);
+    end
+end 
+%FINAL subrutina para encontrar el gradiente en m_s
+     
+     
+    numerador_s=0;
+    for n=2:N+1;
+        for m=2:M+1;
+            numerador_s=numerador_s+(Derivada_b(n,m)-Derivada_b_prev(n,m))*Derivada_b(n,m);
+        end
+    end
+     
+    denominador_s=0;
+    for n=2:N+1;
+        for m=2:M+1;
+            denominador_s=denominador_s+(Derivada_b_prev(n,m))*Derivada_b_prev(n,m);
+        end
+    end
+     
+    cgc_s=numerador_s/denominador_s;
+    kos=kos+1;
+    FuncObj_s_no_tikonov(kos,1)=FuncObj_s_no_tikonov_tempo;
+     
+    %Criterios para evaluar el comportamiento del ProInv
+    %acumulo los vaores de m_s para tener el historico y poder comparar
+    for n=2:N+1;
+        for m=2:M+1;
+            m_s_historico(n,m,kos)=m_s_prev(n,m);
+        end
+    end
+    %almacenos los valores de las func obj para ver el comportameinto
+    if isnan(FuncObj_s(kos,1))
+        kos=kos-1;
+        criterio_stop=false;
+    else
+        FuncObj_s(kos,1)=func_obj_b_s_0;
+    end
+     
+    %rutina para medir la distancia del m_original al m_calculado en kos
+    for n=2:N+1;
+        for m=2:M+1;
+            Dist_m_s(kos,1)=Dist_m_s(kos,1)+0.5*(m_s_original(n,m)-m_s_prev(n,m)).^2;
+        end
+    end
+     
+    alpha_s_historico(kos,1)=alpha_s;
+     
+    kos=kos-1;
+     
+     
+     
+     
+     
+    %acabo de encontrar el m'inimo para m_s, ahora lo hago para m_a
+    hcg_a_prev=hcg_a;
+    hcg_a=-Derivada_b_a+cgc_a*hcg_a_prev;
+    comparar_direccion=0;
+    for n=2:N+1;
+        for m=2:M+1;
+            comparar_direccion=comparar_direccion+Derivada_b_a(n,m)*hcg_a(n,m);
+        end
+    end
+             
+    if comparar_direccion>=0
+        hcg_a=-Derivada_b_a;
+    end
+     
+     
+    %INICIO subrutina calculo FuncObj y derivada de alpha=0
+    func_obj_i=0.5*((Mfondo-Rofondo)*(Mfondo-Rofondo)'+(Mizq-Roizq)'*(Mizq-Roizq)+(Mder-Roder)'*(Mder-Roder))+ w_a*sum(sum(m_a.^2));
+    m_a=m_a+alpha_a_delta*hcg_a; %variacion del argumento de la funci'on
+     
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+FuncObj_a_no_tikonov_tempo=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder));
+m_a=m_a-alpha_a_delta*hcg_a;
+ 
+DerivadaFuncObj_b_a=(func_obj_f-func_obj_i)/alpha_a_delta;
+func_obj_b_a_0=func_obj_i;
+ 
+DerivadaFuncObj_b_a_0=DerivadaFuncObj_b_a;
+%FINAL subrutina calculo func obj y derivada de alpha=0
+ 
+ 
+%pongo el max valor de alpha_a de tal forma que equivalga a un 5% del
+%valor de m_s_max
+alpha_a_max=5/max(max(abs(hcg_a)));
+ka_max=N*M;
+ 
+if DerivadaFuncObj_b_a>=0
+    alpha_a=alpha_a_max;
+else
+    ka=0;
+    gamma_a=0.9*DerivadaFuncObj_b_a_0;
+    a=0;
+    b=0.05*alpha_a_max;
+     
+     
+%INICIO subrutina para conocer los valores de las funcion y derivada func obj para el valor de b
+m_a=m_a+b*hcg_a; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+ 
+m_a=m_a+alpha_a_delta*hcg_a;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+ 
+DerivadaFuncObj_b_a=(func_obj_f-func_obj_i)*100000/alpha_a_delta;
+ 
+%devuelvo los valores originales de m_s
+m_a=m_a-(b+alpha_a_delta)*hcg_a;
+%FINAL subrutina para conocer los valores de las funcion y derivada func obj para el valor de b
+ 
+ 
+%calculo el valor de lambda para b
+lambda_b_a=func_obj_b_a_0+0.01*DerivadaFuncObj_b_a_0*b;
+ 
+    %con este while acoto el valor de b, ya sea por los criterios de
+    %derivada, funcobj o simplemente por pasarse del l'imite
+    while (((func_obj_i<=lambda_b_a)&(DerivadaFuncObj_b_a<=gamma_a))&(b<6*alpha_a_max)&(ka<ka_max))
+        ka=ka+1;
+        a=b;
+        b=2*b;
+        %recalculo los valores de la funcObj y su derivada para reevaluar las condiciones del while
+         
+         
+%INICIO subrutina para conocer los valores de las funcion y derivada func obj para el valor de b
+m_a=m_a+b*hcg_a; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+ 
+m_a=m_a+alpha_a_delta*hcg_a;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+func_obj_b_a=func_obj_i;
+ 
+DerivadaFuncObj_b_a=(func_obj_f-func_obj_i)*100000/alpha_a_delta;
+ 
+%devuelvo los valores originales de m_s
+m_a=m_a-(b+alpha_a_delta)*hcg_a;
+%FINAL subrutina para conocer los valores de las funcion y derivada funcobj para el valor de b
+ 
+ 
+    lambda_b_a=func_obj_b_a+0.01*DerivadaFuncObj_b_a_0*b;
+    end
+    alpha_a=b; 
+    %con esto ya consegui un b que esta en la regi?n suave del m?nimo o a
+    %su derecha.
+end
+     
+    %ahora el calculo para disminuir el cerco
+     
+     
+    %INICIO subrutina para conocer los valores de las funcion y derivada
+    %func obj para el valor de a
+m_a=m_a+a*hcg_a; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+ 
+m_a=m_a+alpha_a_delta*hcg_a;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+func_obj_a_a=func_obj_i;
+ 
+DerivadaFuncObj_a_a=(func_obj_f-func_obj_i)*100000/alpha_a_delta;
+ 
+%devuelvo los valores originales de m_s
+m_a=m_a-(a+alpha_a_delta)*hcg_a;
+%FINAL subrutina para conocer los valores de las funcion y derivada funcobj para el valor de a
+     
+ 
+    tao=1/50;
+    epsi=alpha_a_max/(3*N*M); %que es un valor peque? de epsi que varia con el tama?o del cuerpo
+    ka=0;
+    while ((abs(DerivadaFuncObj_b_a)>tao*abs(DerivadaFuncObj_b_a_0))&(b-a>epsi)&(ka<ka_max))
+        ka=ka+1;
+        Da=b-a;
+        Ca=(func_obj_b_a-func_obj_a_a-Da*DerivadaFuncObj_a_a)/(Da^2);
+        if Ca>0
+            alpha_a=a-DerivadaFuncObj_a_a/(2*Ca);
+            alpha_a=min(max(alpha_a,a+0.1*Da),b-0.1*Da);
+        else
+            alpha_a=(a+b)/2;
+        end
+         
+         
+         %INICIO subrutina para conocer los valores de las funcion y
+         %derivada de la func obj para alpha_a
+          
+m_a=m_a+alpha_a*hcg_a; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+ 
+m_a=m_a+alpha_a_delta*hcg_a;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+func_obj_alpha_a=func_obj_i;
+ 
+DerivadaFuncObj_alpha_a=(func_obj_f-func_obj_i)*100000/alpha_a_delta;
+ 
+%devuelvo los valores originales de m_s
+m_a=m_a-(alpha_a+alpha_a_delta)*hcg_a;
+        %FINAL subrutina para conocer los valores de las funcion obj para el valor de alpha_a
+         
+         
+        lambda_alpha_a=func_obj_b_a_0+0.01*DerivadaFuncObj_b_a_0*alpha_a;
+        if func_obj_alpha_a<lambda_alpha_a
+            a=alpha_a;
+        else
+            b=alpha_a;
+        end
+         
+         
+        %INICIO subrutina para conocer los valores de las funcion obj para
+         %el valor de b
+m_a=m_a+b*hcg_a; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_b_a=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+m_a=m_a-b*hcg_a;
+        %FINAL subrutina para conocer los valores de las funcion obj para
+        %el valor de b
+         
+         
+        %INICIO subrutina para conocer los valores de las funcion y
+         %derivada de la func obj para a
+          
+m_a=m_a+a*hcg_a; %variacion del argumento de la funci'on
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_i=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+ 
+m_a=m_a+alpha_a_delta*hcg_a;
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+        
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+         
+%quiero saber cual es el valor de la funci'on objetivo func_obj
+func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+func_obj_a_a=func_obj_i;
+ 
+DerivadaFuncObj_a_a=(func_obj_f-func_obj_i)*100000/alpha_a_delta;
+ 
+%devuelvo los valores originales de m_s
+m_a=m_a-(a+alpha_a_delta)*hcg_a;
+        %FINAL subrutina para conocer los valores de las funcion y
+         %derivada de la func obj para a       
+ 
+         
+        if func_obj_a_a>func_obj_b_a_0
+            alpha_a=alpha_a_max;
+        end
+        
+    end
+    m_a_prev=m_a;
+    m_a=abs(m_a+alpha_a*hcg_a);
+    Derivada_b_a_prev=Derivada_b_a;
+     
+     
+     
+%INICIO subrutina para encontrar el gradiente en m_a  
+%valores originales
+t=2; m=2; n=2;
+diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+%valores de la FRONTERA iniciales
+Rofondo=zeros(M,1);
+Rofondo=R(N+1,2:M+1,t,1);
+Roizq=zeros(2*N,1);
+Roizq(1:N)=R(2:N+1,2,t,2);
+Roizq(N+1:2*N)=R(2:N+1,2,t,3);
+Roder=zeros(2*N,1);
+Roder(1:N)=R(2:N+1,M+1,t,5);
+Roder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+%pillo el valor de la funcobj
+func_obj_i=0.5*((Mfondo-Rofondo)*(Mfondo-Rofondo)'+(Mizq-Roizq)'*(Mizq-Roizq)+(Mder-Roder)'*(Mder-Roder))+ w_a*sum(sum(m_a.^2));
+ 
+Derivada_b_a=zeros(N+2,M+2);
+ 
+%aqui debo cambiar los coeficientes m_s para variar las fronteras
+for rt=2:N+1;
+    for st=2:M+1;
+        m_a(rt,st)=m_a(rt,st)*(1+Delta);
+ 
+        t=2; m=2; n=2;
+        diferencia=zeros(T,1);
+while (diferencia(t-1,1)==0) | (diferencia(t-1,1)>.001)
+    for n=2:N+1;
+       for m=2:M+1; 
+           es=exp(-m_s(n,m)*h);
+           ea=exp(-m_a(n,m)*h);
+           mat=[ es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea
+               ; atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea atras_lado*(1-es)*ea
+               ; atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea frente_lado*(1-es)*ea
+               ; frente_lado*(1-es)*ea atras_lado*(1-es)*ea atras*(1-es)*ea atras_lado*(1-es)*ea frente_lado*(1-es)*ea es*ea];
+           if abs(m-2*(round(m/2))) > 0
+              vecup=[R(n-1,m,t-1,1) ; R(n,m-1,t,2) ; R(n+1,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n+1,m+1,t-1,5) ; R(n,m+1,t-1,6)]; %vector que va arriba
+              vec=mat*vecup; %impar o superior
+           else
+              vecdo=[R(n-1,m,t-1,1) ; R(n-1,m-1,t-1,2) ; R(n,m-1,t-1,3) ; R(n+1,m,t-1,4) ; R(n,m+1,t-1,5) ; R(n-1,m+1,t-1,6)]; %vector que va abajo
+              vec=mat*vecdo; %par o inferior
+           end
+           R(n,m,t,1)=vec(1);
+           R(n,m,t,2)=vec(2);
+           R(n,m,t,3)=vec(3);
+           R(n,m,t,4)=vec(4);
+           R(n,m,t,5)=vec(5);
+           R(n,m,t,6)=vec(6);           
+       end
+    end
+    diferencia(t,1)=abs(sum(R(N+1,:,t,1)-R(N+1,:,t-1,1))/(sum(R(N+1,:,t-1,1))+2e-225));
+    t=t+1;
+end
+t=t-1;
+ 
+        %valores de la FRONTERA alterados
+        Rfondo=zeros(M,1);
+        Rfondo=R(N+1,2:M+1,t,1);
+        Rizq=zeros(2*N,1);
+        Rizq(1:N)=R(2:N+1,2,t,2);
+        Rizq(N+1:2*N)=R(2:N+1,2,t,3);
+        Rder=zeros(2*N,1);
+        Rder(1:N)=R(2:N+1,M+1,t,5);
+        Rder(N+1:2*N)=R(2:N+1,M+1,t,6);
+ 
+        %variacion delta respecto a m_s
+        func_obj_f=0.5*((Mfondo-Rfondo)*(Mfondo-Rfondo)'+(Mizq-Rizq)'*(Mizq-Rizq)+(Mder-Rder)'*(Mder-Rder))+ w_a*sum(sum(m_a.^2));
+         
+        Derivada_b_a(rt,st)=(1/(m_a(rt,st)*Delta))*((Rfondo-Rofondo)*(Rofondo-Mfondo)'+(Rizq-Roizq)'*(Roizq-Mizq)+(Rder-Roder)'*(Roder-Mder))+ 2*w_a*m_a(rt,st);
+         
+        m_a(rt,st)=m_a(rt,st)/(1+Delta);
+    end
+end 
+%FINAL subrutina para encontrar el gradiente en m_a
+     
+     
+    numerador_a=0;
+    for n=2:N+1;
+        for m=2:M+1;
+            numerador_a=numerador_a+(Derivada_b_a(n,m)-Derivada_b_a_prev(n,m))*Derivada_b_a(n,m);
+        end
+    end
+     
+    denominador_a=0;
+    for n=2:N+1;
+        for m=2:M+1;
+            denominador_a=denominador_a+(Derivada_b_a_prev(n,m))*Derivada_b_a_prev(n,m);
+        end
+    end
+     
+    cgc_a=numerador_a/denominador_a;
+    kos=kos+1;
+    FuncObj_a_no_tikonov(kos,1)=FuncObj_a_no_tikonov_tempo;
+     
+    %Criterios de evaluaci'on 
+    %acumulo los vaores de m_s para tener el historico y poder comparar
+    for n=2:N+1;
+        for m=2:M+1;
+            m_a_historico(n,m,kos)=m_a_prev(n,m);
+        end
+    end
+    %almacenos los valores de las func obj para ver el comportameinto
+     
+    if isnan(FuncObj_a(kos,1))
+        kos=kos-1;
+        criterio_stop=false;
+    else
+        FuncObj_a(kos,1)=func_obj_b_a_0;
+    end
+         
+    %rutina para medir la distancia del m_original al m_calculado en kos
+    for n=2:N+1;
+        for m=2:M+1;
+            Dist_m_a(kos,1)=Dist_m_a(kos,1)+0.5*(m_a_original(n,m)-m_a_prev(n,m)).^2;
+        end
+    end
+     
+    %para tener los distintos valores de las m_a
+    for n=2:N+1;
+        for m=2:M+1;
+            m_a_historico(n,m,kos)=m_a_prev(n,m);
+        end
+    end
+     
+    alpha_a_historico(kos,1)=alpha_a;
+     
+ 
+ 
+%criterio de parada
+criterio_stop=max(max(abs(Derivada_b_prev)))>max(max(abs(Derivada)))/1000;
+     
+end
+toc
